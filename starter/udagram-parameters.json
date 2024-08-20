@@ -1,6 +1,15 @@
 [
-	{
-		"ParameterKey": "Add you parameters here",
-		"ParameterValue": "Add you parameters here"
-	}
-]
+    {
+      "ParameterKey": "InstanceType",
+      "ParameterValue": "t2.micro"
+    },
+    {
+      "ParameterKey": "AmiId",
+      "ParameterValue": "ami-066784287e358dad1"
+    },
+    {
+      "ParameterKey": "ProjectTag",
+      "ParameterValue": "UdagramProject"
+    }
+  ]
+  
