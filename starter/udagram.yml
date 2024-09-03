@@ -23,6 +23,17 @@ Parameters:
     Description: Project tag used for naming resources
     Type: String
 
+  PublicSubnet:
+    Description: PublicSubnet for Ec2
+    Type: String
+  PublicSubnet1:
+    Description: PublicSubnet for Ec2
+    Type: String
+    
+  VPC:
+    Description: VPC
+    Type: String
+
 Resources:
 
   # Role for EC2 to interact with S3
@@ -60,18 +71,18 @@ Resources:
   AssetsBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
-      BucketName: !Sub 'udagram-assets'
+      BucketName: !Sub 'udagram-assets-cloud'
 
   EC2SecurityGroup:
       Type: "AWS::EC2::SecurityGroup"
       Properties: 
-        VpcId: 'vpc-07d8457bb2f8fa814'
+        VpcId: !Ref VPC
         GroupDescription: "Enable SSH and HTTP access"
         SecurityGroupIngress: 
           - CidrIp: "0.0.0.0/0"
             IpProtocol: "tcp"
-            FromPort: '22'
-            ToPort: '22'
+            FromPort: '80'
+            ToPort: '80'
           - CidrIp: "0.0.0.0/0"
             IpProtocol: "tcp"
             FromPort: '80'
@@ -80,13 +91,13 @@ Resources:
   AppServer:
     Type: AWS::EC2::Instance
     Properties:
-      SubnetId: 'subnet-053b75dc192ec7b42'
+      SubnetId: 'subnet-089ca82790a9733d6'
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
           apt-get update
           apt-get install apache2 -y
-          wget -P /var/www/html https://udagram-assets.s3.amazonaws.com/index.html
+          wget -P /var/www/html https://udagram-assets-cloud.s3.amazonaws.com/index.html
           systemctl start apache2.service
       ImageId: !Ref AmiId
       InstanceType: !Ref InstanceType
@@ -94,6 +105,10 @@ Resources:
       KeyName: "vockey" 
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 10
 
   AppServerLaunchTemplate:
     Type: 'AWS::EC2::LaunchTemplate'
@@ -108,7 +123,7 @@ Resources:
             #!/bin/bash
             apt-get update
             apt-get install apache2 -y
-            wget -P /var/www/html https://udagram-assets.s3.amazonaws.com/index.html
+            wget -P /var/www/html https://udagram-assets-cloud.s3.amazonaws.com/index.html
             systemctl start apache2.service
         IamInstanceProfile:
           Name: !Ref EC2AssetAccessProfile
@@ -116,6 +131,17 @@ Resources:
         SecurityGroupIds:
           - !Ref EC2SecurityGroup
 
+# ALB Security Group
+  ALBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      VpcId: !Ref VPC
+      GroupDescription: "Enable HTTP access via port 80"
+      SecurityGroupIngress: 
+          CidrIp: "0.0.0.0/0"
+          IpProtocol: "tcp"
+          FromPort: '80'
+          ToPort: '80'
 # Auto Scaling Group
   AppServerAutoScalingGroup:
     Type: "AWS::AutoScaling::AutoScalingGroup"
@@ -127,32 +153,31 @@ Resources:
       MaxSize: '4'
       DesiredCapacity: '2'
       VPCZoneIdentifier:
-        - "subnet-053b75dc192ec7b42" 
-        - "subnet-0b46ea88d3d0f53e5"
-
-# ALB Security Group
-  ALBSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
-    Properties: 
-      VpcId: 'vpc-07d8457bb2f8fa814'
-      GroupDescription: "Enable HTTP access via port 80"
-      SecurityGroupIngress: 
-          CidrIp: "0.0.0.0/0"
-          IpProtocol: "tcp"
-          FromPort: '80'
-          ToPort: '80'
-
+        - !Ref PublicSubnet  
+        - !Ref PublicSubnet1  
 # Application Load Balancer
   AppLoadBalancer:
     Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
     Properties: 
       Name: "UdagramLoadBalancerALB"
-      Subnets: 
-        - !Sub 'subnet-053b75dc192ec7b42'
-        - !Sub 'subnet-0b46ea88d3d0f53e5'
+      Subnets:
+        - !Ref PublicSubnet
+        - !Ref PublicSubnet1
       SecurityGroups:
         - !Ref ALBSecurityGroup
-
+  MyTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: MyContainer
+          Hostname: !GetAtt AppServer.PrivateIpAddress
+          HealthCheck:
+            Command: [CMD-SHELL, "curl -f http://localhost:8080/health"]
+            Interval: 60
+            Timeout: 5
+            StartPeriod: 30
+            HealthyThreshold: 3
+            UnhealthyThreshold: 2
 # ALB Target Group
   AppALBTargetGroup:
     Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
@@ -160,7 +185,7 @@ Resources:
       Name: "UdagramTargetGroup"
       Port: 80
       Protocol: HTTP
-      VpcId: "vpc-07d8457bb2f8fa814"
+      VpcId: !Ref VPC
       TargetType: "instance"
 
 # ALB Listener
@@ -189,4 +214,19 @@ Outputs:
   # Output the Public IP of the Application Server
   AppServerPublicIP:
     Description: "Public IP of the application server."
-    Value: !GetAtt AppServer.PublicIp
+    Value: !GetAtt AppServer.PrivateIpAddress
+  LoadBalancerDNS:
+    Description: "DNS Name of the Load Balancer"
+    # Value: !GetAtt AppLoadBalancer.DNSName
+    Value: !Join
+      - ''
+      - - 'http://'
+        - !GetAtt AppLoadBalancer.DNSName
+  VPCId:
+    Value: !Ref VPC
+    Export:
+      Name: MyVPCId
+  PublicSubnetId:
+    Value: !Ref PublicSubnet
+    Export:
+      Name: MyPublicSubnetId
