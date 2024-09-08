@@ -1,27 +1,18 @@
 [
-    {
-      "ParameterKey": "InstanceType",
-      "ParameterValue": "t2.micro"
-    },
-    {
-      "ParameterKey": "AmiId",
-      "ParameterValue": "ami-066784287e358dad1"
-    },
-    {
-      "ParameterKey": "ProjectTag",
-      "ParameterValue": "UdagramProject"
-    },
-    {
-      "ParameterKey": "VPC",
-      "ParameterValue": "vpc-094ff954300ecd35a"
-    },
-    {
-      "ParameterKey": "PublicSubnet",
-      "ParameterValue": "subnet-0893885285c641c62"
-    },
-    {
-      "ParameterKey": "PublicSubnet1",
-      "ParameterValue": "subnet-089ca82790a9733d6"
-    }
-  ]
-  
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "udagram"
+  },
+  {
+    "ParameterKey": "VolumeSize",
+    "ParameterValue": "10"
+  },
+  {
+    "ParameterKey": "S3BucketName",
+    "ParameterValue": "udagram-s3bucket-326879950031"
+  },
+  {
+    "ParameterKey": "KeyPairName",
+    "ParameterValue": "vockey"
+  }
+]

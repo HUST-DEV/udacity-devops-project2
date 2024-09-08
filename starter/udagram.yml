@@ -1,232 +1,226 @@
-AWSTemplateFormatVersion: "2010-09-09"
-
-Description: >
-  MinhNX8_FPT_SoftWare / Udagram Web App Infrastructure
+Description: Nguyễn Xuân Minh-FPT - Project 2 Deploy a high-availability web app using CloudFormation
 
 Parameters:
-  InstanceType:
-    Description: EC2 instance type
+  # Add your parameters here
+  ProjectName:
     Type: String
-    Default: t2.micro
-    AllowedValues:
-      - t2.micro
-      - t2.small
-      - t3.micro
-      - t3.small
-    ConstraintDescription: Must be a valid EC2 instance type from the allowed list.
-  
-  AmiId:
-    Description: AMI ID for the EC2 instance
-    Type: String
+    Description: Name of our environment
 
-  ProjectTag:
-    Description: Project tag used for naming resources
+  VolumeSize:
     Type: String
+    Description: Size of the EC3 volume
+    Default: "10"
 
-  PublicSubnet:
-    Description: PublicSubnet for Ec2
+  S3BucketName:
     Type: String
-  PublicSubnet1:
-    Description: PublicSubnet for Ec2
+    Description: S3 bucket that stores the static assets of the website.
+
+  KeyPairName:
     Type: String
-    
-  VPC:
-    Description: VPC
-    Type: String
+    Description: Name of key pair
 
 Resources:
+  # Add your resources here
+  WebAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      LaunchTemplateData:
+        UserData:
+          # Fn::Base64: !Sub |
+          Fn::Base64: |
+            #!/bin/bash
+            apt-get update -y
+            sudo apt-get install nginx -y
+            service nginx start
 
-  # Role for EC2 to interact with S3
-  EC2AssetRole:
-    Type: 'AWS::IAM::Role'
+            # Define the directory where the index.html will be placed
+            WEB_DIR="/var/www/html"
+
+            # Create a basic index.html file
+            cat <<EOF > index.html
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>It works! Udagram, Udacity</title>
+            </head>
+            <body>
+                <h1>It works! Udagram, Udacity</h1>
+                <p>This website is hosted on Nginx.</p>
+            </body>
+            </html>
+            EOF
+
+            # Copy index.html to the Nginx web directory
+            sudo rm -r $WEB_DIR/index.*
+            sudo cp index.html $WEB_DIR
+
+            # Reload Nginx to apply changes
+            sudo systemctl reload nginx
+            
+        ImageId: ami-0182f373e66f89c85
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+        - !Ref WebServerSecGroup
+        InstanceType: t2.micro
+        BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+        IamInstanceProfile:
+          Name: !Ref WebAppInstanceProfile
+
+  LBSecGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupDescription: Allow http access to our load balancer
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${ProjectName}-vpc-id"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+  WebServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http access to our hosts from the LB Security Group
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${ProjectName}-vpc-id"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: !Ref LBSecGroup
+        
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        CidrIp: 0.0.0.0/0
+
+  WebAppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-web-servers"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-              - ec2.amazonaws.com
-            Action:
-            - sts:AssumeRole
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
       Policies:
-        - PolicyName: S3AssetAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                - s3:GetObject
-                - s3:PutObject
-                Resource: !Sub 'arn:aws:s3:::${AssetsBucket}/*'
+      - PolicyName: web-servers-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:GetObject'
+            - 's3:PutObject'
+            Resource:
+              - !Sub "arn:aws:s3:::s3://${S3BucketName}/*"
 
-  # IAM Instance profile for EC2
-  EC2AssetAccessProfile:
+      # For Amazon SSM access
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  WebAppInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
+      Path: '/'
       Roles:
-        - Ref: EC2AssetRole
+      - !Ref WebAppInstanceRole
 
-  # S3 bucket to hold static content for the application
-  AssetsBucket:
-    Type: 'AWS::S3::Bucket'
+  WebAppGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      BucketName: !Sub 'udagram-assets-cloud'
-
-  EC2SecurityGroup:
-      Type: "AWS::EC2::SecurityGroup"
-      Properties: 
-        VpcId: !Ref VPC
-        GroupDescription: "Enable SSH and HTTP access"
-        SecurityGroupIngress: 
-          - CidrIp: "0.0.0.0/0"
-            IpProtocol: "tcp"
-            FromPort: '80'
-            ToPort: '80'
-          - CidrIp: "0.0.0.0/0"
-            IpProtocol: "tcp"
-            FromPort: '80'
-            ToPort: '80'
-
-  AppServer:
-    Type: AWS::EC2::Instance
-    Properties:
-      SubnetId: 'subnet-089ca82790a9733d6'
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          apt-get update
-          apt-get install apache2 -y
-          wget -P /var/www/html https://udagram-assets-cloud.s3.amazonaws.com/index.html
-          systemctl start apache2.service
-      ImageId: !Ref AmiId
-      InstanceType: !Ref InstanceType
-      IamInstanceProfile: !Ref EC2AssetAccessProfile
-      KeyName: "vockey" 
-      SecurityGroupIds:
-        - !Ref EC2SecurityGroup
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: 10
-
-  AppServerLaunchTemplate:
-    Type: 'AWS::EC2::LaunchTemplate'
-    Properties:
-      LaunchTemplateName: 'UdagramLaunchTemplate'
-      VersionDescription: 'Udagram version 1.0'
-      LaunchTemplateData:
-        InstanceType: !Ref InstanceType
-        ImageId: !Ref AmiId
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            apt-get update
-            apt-get install apache2 -y
-            wget -P /var/www/html https://udagram-assets-cloud.s3.amazonaws.com/index.html
-            systemctl start apache2.service
-        IamInstanceProfile:
-          Name: !Ref EC2AssetAccessProfile
-        KeyName: "vockey" 
-        SecurityGroupIds:
-          - !Ref EC2SecurityGroup
-
-# ALB Security Group
-  ALBSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
-    Properties: 
-      VpcId: !Ref VPC
-      GroupDescription: "Enable HTTP access via port 80"
-      SecurityGroupIngress: 
-          CidrIp: "0.0.0.0/0"
-          IpProtocol: "tcp"
-          FromPort: '80'
-          ToPort: '80'
-# Auto Scaling Group
-  AppServerAutoScalingGroup:
-    Type: "AWS::AutoScaling::AutoScalingGroup"
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateName: 'UdagramLaunchTemplate'
-        Version: !GetAtt AppServerLaunchTemplate.LatestVersionNumber
-      MinSize: '2'
-      MaxSize: '4'
-      DesiredCapacity: '2'
       VPCZoneIdentifier:
-        - !Ref PublicSubnet  
-        - !Ref PublicSubnet1  
-# Application Load Balancer
-  AppLoadBalancer:
-    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
-    Properties: 
-      Name: "UdagramLoadBalancerALB"
-      Subnets:
-        - !Ref PublicSubnet
-        - !Ref PublicSubnet1
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
-  MyTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      ContainerDefinitions:
-        - Name: MyContainer
-          Hostname: !GetAtt AppServer.PrivateIpAddress
-          HealthCheck:
-            Command: [CMD-SHELL, "curl -f http://localhost:8080/health"]
-            Interval: 60
-            Timeout: 5
-            StartPeriod: 30
-            HealthyThreshold: 3
-            UnhealthyThreshold: 2
-# ALB Target Group
-  AppALBTargetGroup:
-    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
-    Properties:
-      Name: "UdagramTargetGroup"
-      Port: 80
-      Protocol: HTTP
-      VpcId: !Ref VPC
-      TargetType: "instance"
+      - Fn::ImportValue: 
+          !Sub "${ProjectName}-private-subnets"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebAppLaunchTemplate
+        Version: !GetAtt WebAppLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      DesiredCapacity: '1'
+      MaxSize: '3'
+      TargetGroupARNs:
+      - Ref: WebAppTargetGroup
 
-# ALB Listener
-  ALBListener:
-    Type: "AWS::ElasticLoadBalancingV2::Listener"
+  WebAppLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      LoadBalancerArn: !Ref AppLoadBalancer
-      Protocol: HTTP
-      Port: 80
+      Subnets:
+      - Fn::ImportValue: !Sub "${ProjectName}-public-subnet1"
+      - Fn::ImportValue: !Sub "${ProjectName}-public-subnet2"
+      SecurityGroups:
+      - Ref: LBSecGroup
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
       DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: WebAppTargetGroup
+      LoadBalancerArn:
+        Ref: WebAppLB
+      Port: '80'
+      Protocol: HTTP
+
+  ALBListenerRule:
+      Type: AWS::ElasticLoadBalancingV2::ListenerRule
+      Properties:
+        Actions:
         - Type: forward
-          TargetGroupArn: !Ref AppALBTargetGroup
+          TargetGroupArn: !Ref 'WebAppTargetGroup'
+        Conditions:
+        - Field: path-pattern
+          Values: [/]
+        ListenerArn: !Ref 'Listener'
+        Priority: 1
+
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: 
+        Fn::ImportValue:
+          Fn::Sub: "${ProjectName}-vpc-id"
+
+  # S3 bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
 Outputs:
-
-  # Output the name of the S3 Bucket
-  StaticResourcesBucketName:
-    Description: "Name of the S3 bucket for static assets."
-    Value: !Ref AssetsBucket
-
-  # Output the ARN of the EC2 IAM Role
-  EC2AssetRoleARN:
-    Description: "ARN of the EC2 IAM role for asset access."
-    Value: !GetAtt EC2AssetRole.Arn
-
-  # Output the Public IP of the Application Server
-  AppServerPublicIP:
-    Description: "Public IP of the application server."
-    Value: !GetAtt AppServer.PrivateIpAddress
-  LoadBalancerDNS:
-    Description: "DNS Name of the Load Balancer"
-    # Value: !GetAtt AppLoadBalancer.DNSName
-    Value: !Join
-      - ''
-      - - 'http://'
-        - !GetAtt AppLoadBalancer.DNSName
-  VPCId:
-    Value: !Ref VPC
+  LoadBalancerURL:
+    Description: "The public URL of the Application (i.e. the LoadBalancer's DNS)"
+    Value: !Sub "http://${WebAppLB.DNSName}"
     Export:
-      Name: MyVPCId
-  PublicSubnetId:
-    Value: !Ref PublicSubnet
-    Export:
-      Name: MyPublicSubnetId
+      Name: !Sub "${ProjectName}-LoadBalancerURL"
