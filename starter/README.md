@@ -1,6 +1,6 @@
 # CD12352 - Infrastructure as Code Project Solution
 # [YOUR NAME HERE]
-UdagramLoadBalancerALB-4914672.us-east-1.elb.amazonaws.com
+http://udagra-webap-22c2m0i1hfiy-291834108.us-east-1.elb.amazonaws.com/
 ## Spin up instructions
 TODO
 
